@@ -130,12 +130,22 @@ async function getPublicAccount(accountId) {
     }
   );
 
-  if (!response.ok) {
-    return json(
-      { error: "Parcl account lookup failed" },
-      response.status === 404 ? 404 : 502
-    );
-  }
+
+if (!response.ok) {
+  return json({
+    error: "Parcl account lookup failed",
+    parclStatus: response.status,
+    accountId,
+    message: response.status === 404
+      ? "Account not found. Check your account ID."
+      : response.status === 403
+      ? "Access denied by Parcl API."
+      : response.status === 429
+      ? "Rate limit reached. Try later."
+      : "Parcl API returned an error."
+  }, response.status === 404 ? 404 : 502);
+}
+
 
   const account = await response.json();
 

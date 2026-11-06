@@ -140,7 +140,10 @@ const RETENTION_MS = 45 * DAY_MS;
 
 async function fetchAccount(accountId) {
   return fetch(`https://validator.v4.parcl.co/v1/accounts/${accountId}`, {
-    headers: { Accept: "application/json" }
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "parcl-volume-tracker/1.0 (+https://github.com/devil524/parcl-volume-tracker)"
+    }
   });
 }
 
@@ -206,9 +209,11 @@ async function getPublicAccount(accountId, env) {
   const response = await fetchAccount(accountId);
 
   if (!response.ok) {
-  return json({
+    const parclBody = (await response.text().catch(() => "")).slice(0, 200);
+    return json({
     error: "Parcl account lookup failed",
     parclStatus: response.status,
+    parclBody,
     accountId,
     message: response.status === 404
       ? "Account not found. Check your account ID."

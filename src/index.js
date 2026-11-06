@@ -237,6 +237,7 @@ async function getPublicAccount(accountId, env) {
     let today = { value: null };
     let week = { value: null };
     let tracking = "d1_not_configured";
+    let trackingError = null;
 
     if (env.DB) {
       try {
@@ -245,8 +246,9 @@ async function getPublicAccount(accountId, env) {
         today = await volumeSince(env, accountId, p.dayStart, account.lifetimeVolume);
         week = await volumeSince(env, accountId, p.weekStart, account.lifetimeVolume);
         tracking = "snapshots";
-      } catch {
+      } catch (err) {
         tracking = "d1_error";
+        trackingError = String(err && err.message ? err.message : err).slice(0, 200);
       }
     }
 
@@ -262,6 +264,7 @@ async function getPublicAccount(accountId, env) {
       lifetime,
       currency: "USD",
       tracking,
+      trackingError,
       ...periodDetails(p)
     });
   } catch {

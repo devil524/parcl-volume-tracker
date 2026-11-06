@@ -133,13 +133,77 @@ function formatUSD(value) {
   );
 }
 
-async function getPublicAccount(accountId) {
-  const response = await fetch(
-    `https://validator.v4.parcl.co/v1/accounts/${accountId}`,
-    {
-      headers: { Accept: "application/json" }
+const MAX_TRACKED = 25;                  // accounts snapshotted by the cron job
+const BASELINE_TOLERANCE_MS = 90 * 1000; // cron fires a few seconds after the boundary
+const MAX_BASELINE_GAP_MS = 30 * 60 * 1000;
+const RETENTION_MS = 45 * DAY_MS;
+
+async function fetchAccount(accountId) {
+  return fetch(`https://validator.v4.parcl.co/v1/accounts/${accountId}`, {
+    headers: { Accept: "application/json" }
+  });
+}
+
+async function saveSnapshot(env, accountId, account, now) {
+  if (!env.DB) return;
+  const minute = Math.floor(now / 60000) * 60000; // at most one row per minute
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO snapshots (account_id, ts, lifetime, volume30d) VALUES (?1, ?2, ?3, ?4)"
+  ).bind(accountId, minute, String(account.lifetimeVolume), String(account.volume30d)).run();
+}
+
+async function trackAccount(env, accountId, now) {
+  if (!env.DB) return;
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO tracked (account_id, added_at) SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM tracked) < ?3"
+  ).bind(accountId, now, MAX_TRACKED).run();
+}
+
+// Volume since `startMs` = current lifetime volume minus lifetime volume at the window start.
+async function volumeSince(env, accountId, startMs, currentLifetime) {
+  if (!env.DB) return { value: null };
+  let row = await env.DB.prepare(
+    "SELECT ts, lifetime FROM snapshots WHERE account_id = ?1 AND ts <= ?2 ORDER BY ts DESC LIMIT 1"
+  ).bind(accountId, startMs + BASELINE_TOLERANCE_MS).first();
+
+  if (!row) {
+    row = await env.DB.prepare(
+      "SELECT ts, lifetime FROM snapshots WHERE account_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT 1"
+    ).bind(accountId, startMs).first();
+  }
+  if (!row) return { value: null };
+
+  const exact =
+    row.ts <= startMs + BASELINE_TOLERANCE_MS &&
+    row.ts >= startMs - MAX_BASELINE_GAP_MS;
+  let delta = BigInt(currentLifetime) - BigInt(row.lifetime);
+  if (delta < 0n) delta = 0n;
+
+  return {
+    value: formatUSD(delta),
+    partial: !exact,
+    since: new Date(row.ts).toISOString()
+  };
+}
+
+async function runSnapshots(env) {
+  if (!env.DB) return;
+  const now = Date.now();
+  const { results } = await env.DB.prepare("SELECT account_id FROM tracked").all();
+  for (const { account_id } of results) {
+    try {
+      const response = await fetchAccount(account_id);
+      if (!response.ok) continue;
+      await saveSnapshot(env, account_id, await response.json(), now);
+    } catch {
+      // skip this account; the next run will try again
     }
-  );
+  }
+  await env.DB.prepare("DELETE FROM snapshots WHERE ts < ?1").bind(now - RETENTION_MS).run();
+}
+
+async function getPublicAccount(accountId, env) {
+  const response = await fetchAccount(accountId);
 
   if (!response.ok) {
   return json({
@@ -160,15 +224,40 @@ async function getPublicAccount(accountId) {
   const account = await response.json();
 
   try {
+    const now = Date.now();
+    const p = getPeriods(now);
+    const lifetime = formatUSD(account.lifetimeVolume);
+    const volume30d = formatUSD(account.volume30d);
+
+    let today = { value: null };
+    let week = { value: null };
+    let tracking = "d1_not_configured";
+
+    if (env.DB) {
+      try {
+        await trackAccount(env, accountId, now);
+        await saveSnapshot(env, accountId, account, now);
+        today = await volumeSince(env, accountId, p.dayStart, account.lifetimeVolume);
+        week = await volumeSince(env, accountId, p.weekStart, account.lifetimeVolume);
+        tracking = "snapshots";
+      } catch {
+        tracking = "d1_error";
+      }
+    }
+
     return json({
       accountId,
-      today: null,
-      week: null,
-      volume30d: formatUSD(account.volume30d),
-      lifetime: formatUSD(account.lifetimeVolume),
+      today: today.value,
+      todayPartial: today.partial ?? null,
+      todaySince: today.since ?? null,
+      week: week.value,
+      weekPartial: week.partial ?? null,
+      weekSince: week.since ?? null,
+      volume30d,
+      lifetime,
       currency: "USD",
-      dailyWeeklyStatus: "trade_history_required",
-      ...periodDetails(getPeriods())
+      tracking,
+      ...periodDetails(p)
     });
   } catch {
     return json(
@@ -205,7 +294,7 @@ export default {
       }
 
       try {
-        return await getPublicAccount(accountId);
+        return await getPublicAccount(accountId, env);
       } catch {
         return json(
           { error: "Unable to contact Parcl" },
@@ -250,6 +339,10 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runSnapshots(env));
   }
 };
 

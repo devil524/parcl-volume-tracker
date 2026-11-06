@@ -12,8 +12,15 @@ Community dashboard (Cloudflare Worker + static page) for Parcl V4 account volum
 - `POST /api/volume-preview`: body `{ "trades": [{ "timestamp": ms, "notionalUSD": 123.45 }] }` returns daily/weekly/total volume.
 - `GET /api/health`
 
-## Limits
-Daily and weekly totals need fill history, which requires an API key. The key can place trades, so it must never go into this site. Compute those totals locally (see the Python tracker script) or paste fills into `/api/volume-preview`. Figures are estimates; official weekly totals are the ones after review.
+## How daily/weekly volume works
+No API key is needed. The Worker saves snapshots of an account's public `lifetimeVolume` in D1 (on every lookup, and every 15 minutes via a cron trigger for tracked accounts, up to 25). Today = lifetime now minus lifetime at 00:00 UTC. This week = lifetime now minus lifetime at the week start (Thursday 05:30 UTC).
+- Tracking begins the first time an account ID is looked up. Until a snapshot exists at the start of a window, that figure is marked "counting since …".
+- Figures are estimates; official weekly totals are the ones after review.
+- Never put a trading-enabled API key into this site.
 
-## Deploy
-`npx wrangler deploy` (D1 binding `DB` is configured but not used yet).
+## One-time setup
+```bash
+npx wrangler d1 execute parcl-tracker-db --remote --file=schema.sql
+npx wrangler deploy
+```
+Then open the site and look up your account ID once; the cron job keeps snapshotting it.

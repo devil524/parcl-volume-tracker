@@ -1,15 +1,17 @@
+
 {
   "name": "parcl-volume-tracker",
   "main": "src/index.js",
   "compatibility_date": "2026-11-06",
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    "binding": "ASSETS"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "parcl-tracker-db",
-      "database_id": "YOUR_ACTUAL_D1_DATABASE_ID"
+      "database_id": "efe0b46f-c109-43fb-a2f7-10d329d720c6"
     }
   ]
 }

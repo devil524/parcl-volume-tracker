@@ -1,4 +1,5 @@
 
+// Week 1 starts Thu Nov 5 2026 05:30 UTC (month index 10 = November)
 const WEEK_ANCHOR = Date.UTC(2026, 10, 5, 5, 30);
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -47,14 +48,24 @@ function calculateVolume(trades, now = Date.now()) {
   let totalTrades = 0;
 
   for (const trade of trades) {
-    const timestamp =
+    let timestamp =
       typeof trade.timestamp === "number"
         ? trade.timestamp
         : Date.parse(trade.timestamp);
 
-    const volume = Number(trade.notionalUSD);
+    // Treat small numeric timestamps as Unix seconds, not milliseconds
+    if (typeof trade.timestamp === "number" && timestamp < 1e11) {
+      timestamp *= 1000;
+    }
+
+    const raw = trade.notionalUSD;
+    const volume =
+      raw === null || raw === undefined || raw === ""
+        ? NaN
+        : Number(raw);
 
     if (
+      !trade ||
       !Number.isFinite(timestamp) ||
       !Number.isFinite(volume) ||
       volume < 0
@@ -130,8 +141,7 @@ async function getPublicAccount(accountId) {
     }
   );
 
-
-if (!response.ok) {
+  if (!response.ok) {
   return json({
     error: "Parcl account lookup failed",
     parclStatus: response.status,
